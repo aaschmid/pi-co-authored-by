@@ -2,6 +2,8 @@
 
 A [Pi](https://github.com/badlogic/pi) extension that automatically appends git trailers to commit messages when the agent runs `git commit`. Adds the model name and pi version so you always know which AI helped write the code.
 
+> Forked from [bruno-garcia/pi-co-authored-by](https://github.com/bruno-garcia/pi-co-authored-by) to broaden command detection (global `-c`/`-C` options before `commit`, `-F`/`--file`/`--message` message flags) and to append trailers before trailing pipes/compound separators so they attach to the commit, not to a piped `tail`. MIT, original author Bruno Garcia.
+
 ## Features
 
 **Co-Authored-By trailer** — Credits the model that helped write the code:
@@ -35,13 +37,13 @@ pi install npm:pi-co-authored-by
 Or try it without installing:
 
 ```bash
-pi -e npm:pi-co-authored-by
+pi -e git:github.com/aaschmid/pi-co-authored-by
 ```
 
-You can also install from git:
+Install from git (this fork):
 
 ```bash
-pi install git:github.com/bruno-garcia/pi-co-authored-by
+pi install git:github.com/aaschmid/pi-co-authored-by
 ```
 
 ## How it works
