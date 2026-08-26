@@ -1,0 +1,3 @@
+# Upstream uses tab indentation; opt out of the global `tab-in-indent`
+# whitespace check so the default pre-commit hook stops flagging it.
+* whitespace=-tab-in-indent
