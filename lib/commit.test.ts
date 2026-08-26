@@ -1,4 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { execSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { isGitCommit, appendTrailers } from "./commit.ts";
 
 describe("isGitCommit", () => {
@@ -56,6 +60,48 @@ describe("isGitCommit", () => {
 
 	it("detects git commit with -S (signed) and -m", () => {
 		expect(isGitCommit('git commit -S -m "signed commit"')).toBe(true);
+	});
+
+	it("detects git -c ... commit (global options before commit)", () => {
+		expect(
+			isGitCommit(
+				'git -c user.name="x" -c user.email="y" commit -s -m "msg"',
+			),
+		).toBe(true);
+	});
+
+	it("detects git -C /path commit -m", () => {
+		expect(isGitCommit('git -C /repo commit -m "msg"')).toBe(true);
+	});
+
+	it("detects git commit -F (message from file)", () => {
+		expect(isGitCommit('git commit -F CHANGES')).toBe(true);
+	});
+
+	it("detects git commit --file", () => {
+		expect(isGitCommit('git commit --file CHANGES')).toBe(true);
+	});
+
+	it("detects git commit --message=foo (long form with =)", () => {
+		expect(isGitCommit('git commit --message=foo')).toBe(true);
+	});
+
+	it("detects git commit -F combined with -m", () => {
+		expect(isGitCommit('git commit -F body -m "trailer"')).toBe(true);
+	});
+
+	it("detects a piped git commit", () => {
+		expect(
+			isGitCommit('git -c x=y commit -s -m "msg" 2>&1 | tail -20'),
+		).toBe(true);
+	});
+
+	it("rejects git -c ... commit without a message flag", () => {
+		expect(isGitCommit('git -c x=y commit')).toBe(false);
+	});
+
+	it("rejects git -c ... log (global options on a non-commit command)", () => {
+		expect(isGitCommit('git -c x=y log --oneline')).toBe(false);
 	});
 });
 
@@ -116,5 +162,135 @@ describe("appendTrailers", () => {
 			"0.50.0",
 		);
 		expect(result).toContain("Co-Authored-By: openai/gpt-4o <noreply@pi.dev>");
+	});
+
+	it("inserts trailers before a trailing pipe (not onto the piped command)", () => {
+		const result = appendTrailers(
+			'git commit -m "msg" 2>&1 | tail -20',
+			"Model",
+			"1.0.0",
+		);
+		const trailerIdx = result.indexOf("-m $");
+		const pipeIdx = result.indexOf("| tail");
+		expect(pipeIdx).toBeGreaterThan(trailerIdx);
+		expect(result).toMatch(/ -m \$'Co-Authored-By.*' \| tail/);
+		// The pipe target must not receive the -m flags.
+		expect(result).not.toMatch(/tail.*-m /);
+	});
+
+	it("inserts trailers before a semicolon", () => {
+		const result = appendTrailers(
+			'git commit -m "msg" ; echo done',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toMatch(/ -m \$'Co-Authored-By.*' ; echo done/);
+	});
+
+	it("inserts trailers before &&", () => {
+		const result = appendTrailers(
+			'git commit -m "msg" && git push',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toMatch(/ -m \$'Co-Authored-By.*' && git push/);
+		expect(result).not.toMatch(/git push.*-m /);
+	});
+
+	it("does not split on the & in 2>&1 (redirection, not a separator)", () => {
+		const result = appendTrailers(
+			'git commit -m "msg" 2>&1',
+			"Model",
+			"1.0.0",
+		);
+		// No trailing pipe/separator, so trailers go at the very end.
+		expect(result).toBe(
+			'git commit -m "msg" 2>&1 -m "" -m $' +
+				`'Co-Authored-By: Model <noreply@pi.dev>\\nGenerated-By: pi 1.0.0'`,
+		);
+	});
+
+	it("does not split on a separator inside single quotes", () => {
+		const result = appendTrailers(
+			'git commit -m "a; b | c"',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toMatch(/ -m \$'Co-Authored-By.*'$/);
+		expect(result).not.toMatch(/ -m \$'Co-Authored-By.*' [|;]/);
+	});
+
+	it("appends trailers to a -F commit", () => {
+		const result = appendTrailers(
+			'git commit -F CHANGES',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toBe(
+			`git commit -F CHANGES --trailer 'Co-Authored-By: Model <noreply@pi.dev>' --trailer 'Generated-By: pi 1.0.0'`,
+		);
+	});
+
+	it("a -F commit with trailers actually succeeds (regression: -m + -F rejected)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "coauth-f-"));
+		try {
+			execSync("git init -q", { cwd: dir });
+			execSync("git config user.email t@t.t", { cwd: dir });
+			execSync("git config user.name tester", { cwd: dir });
+			writeFileSync(join(dir, "a"), "a");
+			execSync("git add a", { cwd: dir });
+			writeFileSync(join(dir, "MSG"), "msg from file");
+			const cmd = appendTrailers('git commit -F MSG', "Model", "1.0.0");
+			execSync(cmd, { cwd: dir }); // throws on non-zero exit
+			const body = execSync("git log -1 --format=%B", { cwd: dir }).toString();
+			expect(body).toContain("msg from file");
+			expect(body).toContain("Co-Authored-By: Model <noreply@pi.dev>");
+			expect(body).toContain("Generated-By: pi 1.0.0");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("sign-off (-s)", () => {
+	it("detects git commit -s (sign-off) with -m", () => {
+		expect(isGitCommit('git commit -s -m "msg"')).toBe(true);
+	});
+
+	it("detects git commit -as (stage-all + sign-off) with -m", () => {
+		expect(isGitCommit('git commit -as -m "msg"')).toBe(true);
+	});
+
+	it("appendTrailers preserves the -s flag in the rewritten command", () => {
+		const result = appendTrailers('git commit -s -m "msg"', "Model", "1.0.0");
+		expect(result).toMatch(/\s-s\s/);
+		expect(result).toContain("-m $'Co-Authored-By:");
+	});
+
+	it("leaves Signed-off-by as the last trailer when -s is present", () => {
+		const dir = mkdtempSync(join(tmpdir(), "coauth-s-"));
+		try {
+			execSync("git init -q", { cwd: dir });
+			execSync("git config user.email t@t.t", { cwd: dir });
+			execSync("git config user.name tester", { cwd: dir });
+			writeFileSync(join(dir, "a"), "a");
+			execSync("git add a", { cwd: dir });
+			const cmd = appendTrailers(
+				'git commit -s -m "fix" -m "body"',
+				"Model",
+				"1.0.0",
+			);
+			execSync(cmd, { cwd: dir });
+			const body = execSync("git log -1 --format=%B", { cwd: dir }).toString();
+			const trailers = body
+				.split("\n")
+				.filter((l) => /^(Signed-off-by|Co-Authored-By|Generated-By):/.test(l));
+			expect(trailers.length).toBe(3);
+			expect(trailers[trailers.length - 1]).toMatch(/^Signed-off-by:/);
+			expect(trailers.some((l) => l.startsWith("Co-Authored-By: Model"))).toBe(true);
+			expect(trailers.some((l) => l.startsWith("Generated-By: pi 1.0.0"))).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
