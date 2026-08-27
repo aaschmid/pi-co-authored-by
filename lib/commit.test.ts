@@ -279,3 +279,46 @@ describe("sign-off (-s)", () => {
 		}
 	});
 });
+
+describe("compound commands and heredocs (regression)", () => {
+	it("does not fire when git commit is in a later && segment", () => {
+		// `git add X && git commit ...` — firing would inject trailers into
+		// `git add`, breaking it. Skip the whole compound instead.
+		expect(
+			isGitCommit('git add package-lock.json && git commit -s -m "fix: x"'),
+		).toBe(false);
+	});
+
+	it("does not fire when git commit is in a later ; segment", () => {
+		expect(isGitCommit('echo hi ; git commit -m "msg"')).toBe(false);
+	});
+
+	it("fires when git commit is the first segment, injects before &&", () => {
+		const result = appendTrailers(
+			'git commit -m "msg" && git push',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toMatch(/ -m \$'Co-Authored-By.*' && git push/);
+		expect(result).not.toMatch(/git push.*-m /);
+	});
+
+	it("does not fire when git commit -m appears only inside a heredoc body", () => {
+		const cmd = [
+			"cat > file <<'EOF'",
+			'some text mentioning git commit -m "x"',
+			"EOF",
+		].join("\n");
+		expect(isGitCommit(cmd)).toBe(false);
+	});
+
+	it("strips a heredoc body and detects a following real git commit", () => {
+		const cmd = ["cat > f <<'EOF'", "body", "EOF", 'git commit -m "msg"'].join(
+			"\n",
+		);
+		expect(isGitCommit(cmd)).toBe(true);
+		const result = appendTrailers(cmd, "Model", "1.0.0");
+		expect(result).toContain('git commit -m "msg"');
+		expect(result).toContain("Co-Authored-By: Model");
+	});
+});
