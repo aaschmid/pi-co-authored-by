@@ -241,7 +241,10 @@ describe("appendTrailers", () => {
 			execSync("git add a", { cwd: dir });
 			writeFileSync(join(dir, "MSG"), "msg from file");
 			const cmd = appendTrailers('git commit -F MSG', "Model", "1.0.0");
-			execSync(cmd, { cwd: dir }); // throws on non-zero exit
+			// pi runs commits through /bin/bash (its shell backend); execSync defaults
+			// to /bin/sh, which is dash on the Ubuntu runner and breaks $'...' quoting
+			// used by the -m trailer shape. Mirror production's shell.
+			execSync(cmd, { cwd: dir, shell: "/bin/bash" }); // throws on non-zero exit
 			const body = execSync("git log -1 --format=%B", { cwd: dir }).toString();
 			expect(body).toContain("msg from file");
 			expect(body).toContain("Co-Authored-By: Model <noreply@pi.dev>");
@@ -280,7 +283,7 @@ describe("sign-off (-s)", () => {
 				"Model",
 				"1.0.0",
 			);
-			execSync(cmd, { cwd: dir });
+			execSync(cmd, { cwd: dir, shell: "/bin/bash" });
 			const body = execSync("git log -1 --format=%B", { cwd: dir }).toString();
 			const trailers = body
 				.split("\n")
