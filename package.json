@@ -17,10 +17,10 @@
     "LICENSE"
   ],
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.63.2",
+    "@earendil-works/pi-coding-agent": "^0.84.3",
     "vitest": "^4.0.0"
   },
   "pi": {

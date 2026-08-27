@@ -13,8 +13,8 @@
  *   Generated-By: pi 0.52.12
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { isToolCallEventType, VERSION } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType, VERSION } from "@earendil-works/pi-coding-agent";
 import { isGitCommit, appendTrailers } from "../lib/commit.ts";
 
 export default function (pi: ExtensionAPI) {
