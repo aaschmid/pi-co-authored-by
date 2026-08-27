@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType, VERSION } from "@earendil-works/pi-coding-agent";
-import { isGitCommit, appendTrailers } from "../lib/commit.ts";
+import { appendTrailers, isGitCommit } from "../lib/commit.ts";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
@@ -25,7 +25,9 @@ export default function (pi: ExtensionAPI) {
 		if (!isGitCommit(cmd)) return;
 
 		const model = ctx.model;
-		const modelName = model ? (model.name || `${model.provider}/${model.id}`) : "unknown";
+		const modelName = model
+			? model.name || `${model.provider}/${model.id}`
+			: "unknown";
 
 		event.input.command = appendTrailers(cmd, modelName, VERSION);
 	});

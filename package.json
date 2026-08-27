@@ -1,33 +1,45 @@
 {
-  "name": "pi-co-authored-by",
-  "version": "0.3.0",
-  "description": "A Pi extension that automatically appends Co-Authored-By and Generated-By git trailers to commit messages with the model name and pi version",
-  "author": "Bruno Garcia",
-  "license": "MIT",
-  "homepage": "https://github.com/aaschmid/pi-co-authored-by#readme",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/aaschmid/pi-co-authored-by"
-  },
-  "keywords": ["pi-package", "git", "co-authored-by", "pi-extension"],
-  "files": [
-    "extensions/co-authored-by.ts",
-    "lib/commit.ts",
-    "README.md",
-    "LICENSE"
-  ],
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  },
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.3",
-    "vitest": "^4.0.0"
-  },
-  "pi": {
-    "extensions": ["./extensions"]
-  },
-  "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest"
-  }
+	"name": "pi-co-authored-by",
+	"version": "0.3.0",
+	"description": "A Pi extension that automatically appends Co-Authored-By and Generated-By git trailers to commit messages with the model name and pi version",
+	"author": "Bruno Garcia",
+	"license": "MIT",
+	"homepage": "https://github.com/aaschmid/pi-co-authored-by#readme",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/aaschmid/pi-co-authored-by"
+	},
+	"keywords": [
+		"pi-package",
+		"git",
+		"co-authored-by",
+		"pi-extension"
+	],
+	"files": [
+		"extensions/co-authored-by.ts",
+		"lib/commit.ts",
+		"README.md",
+		"LICENSE"
+	],
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.0.0",
+		"@earendil-works/pi-coding-agent": "^0.84.3",
+		"@types/node": "^22.0.0",
+		"typescript": "^5.0.0",
+		"vitest": "^4.0.0"
+	},
+	"pi": {
+		"extensions": [
+			"./extensions"
+		]
+	},
+	"scripts": {
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"typecheck": "tsc --noEmit",
+		"check": "biome check"
+	}
 }

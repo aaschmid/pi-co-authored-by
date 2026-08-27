@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isGitCommit, appendTrailers } from "./commit.ts";
+import { describe, expect, it } from "vitest";
+import { appendTrailers, isGitCommit } from "./commit.ts";
 
 describe("isGitCommit", () => {
 	it("detects git commit -m", () => {
@@ -64,9 +64,7 @@ describe("isGitCommit", () => {
 
 	it("detects git -c ... commit (global options before commit)", () => {
 		expect(
-			isGitCommit(
-				'git -c user.name="x" -c user.email="y" commit -s -m "msg"',
-			),
+			isGitCommit('git -c user.name="x" -c user.email="y" commit -s -m "msg"'),
 		).toBe(true);
 	});
 
@@ -75,15 +73,15 @@ describe("isGitCommit", () => {
 	});
 
 	it("detects git commit -F (message from file)", () => {
-		expect(isGitCommit('git commit -F CHANGES')).toBe(true);
+		expect(isGitCommit("git commit -F CHANGES")).toBe(true);
 	});
 
 	it("detects git commit --file", () => {
-		expect(isGitCommit('git commit --file CHANGES')).toBe(true);
+		expect(isGitCommit("git commit --file CHANGES")).toBe(true);
 	});
 
 	it("detects git commit --message=foo (long form with =)", () => {
-		expect(isGitCommit('git commit --message=foo')).toBe(true);
+		expect(isGitCommit("git commit --message=foo")).toBe(true);
 	});
 
 	it("detects git commit -F combined with -m", () => {
@@ -91,17 +89,17 @@ describe("isGitCommit", () => {
 	});
 
 	it("detects a piped git commit", () => {
-		expect(
-			isGitCommit('git -c x=y commit -s -m "msg" 2>&1 | tail -20'),
-		).toBe(true);
+		expect(isGitCommit('git -c x=y commit -s -m "msg" 2>&1 | tail -20')).toBe(
+			true,
+		);
 	});
 
 	it("rejects git -c ... commit without a message flag", () => {
-		expect(isGitCommit('git -c x=y commit')).toBe(false);
+		expect(isGitCommit("git -c x=y commit")).toBe(false);
 	});
 
 	it("rejects git -c ... log (global options on a non-commit command)", () => {
-		expect(isGitCommit('git -c x=y log --oneline')).toBe(false);
+		expect(isGitCommit("git -c x=y log --oneline")).toBe(false);
 	});
 });
 
@@ -137,20 +135,12 @@ describe("appendTrailers", () => {
 	});
 
 	it("includes pi version in Generated-By", () => {
-		const result = appendTrailers(
-			'git commit -m "msg"',
-			"Some Model",
-			"1.2.3",
-		);
+		const result = appendTrailers('git commit -m "msg"', "Some Model", "1.2.3");
 		expect(result).toContain("Generated-By: pi 1.2.3");
 	});
 
 	it("uses $'' quoting for the trailer block", () => {
-		const result = appendTrailers(
-			'git commit -m "msg"',
-			"Model",
-			"1.0.0",
-		);
+		const result = appendTrailers('git commit -m "msg"', "Model", "1.0.0");
 		// The trailers should be in a single $'...' string with \\n separator
 		expect(result).toMatch(/-m \$'Co-Authored-By:.*\\nGenerated-By:.*'/);
 	});
@@ -198,11 +188,7 @@ describe("appendTrailers", () => {
 	});
 
 	it("does not split on the & in 2>&1 (redirection, not a separator)", () => {
-		const result = appendTrailers(
-			'git commit -m "msg" 2>&1',
-			"Model",
-			"1.0.0",
-		);
+		const result = appendTrailers('git commit -m "msg" 2>&1', "Model", "1.0.0");
 		// No trailing pipe/separator, so trailers go at the very end.
 		expect(result).toBe(
 			'git commit -m "msg" 2>&1 -m "" -m $' +
@@ -211,21 +197,13 @@ describe("appendTrailers", () => {
 	});
 
 	it("does not split on a separator inside single quotes", () => {
-		const result = appendTrailers(
-			'git commit -m "a; b | c"',
-			"Model",
-			"1.0.0",
-		);
+		const result = appendTrailers('git commit -m "a; b | c"', "Model", "1.0.0");
 		expect(result).toMatch(/ -m \$'Co-Authored-By.*'$/);
 		expect(result).not.toMatch(/ -m \$'Co-Authored-By.*' [|;]/);
 	});
 
 	it("appends trailers to a -F commit", () => {
-		const result = appendTrailers(
-			'git commit -F CHANGES',
-			"Model",
-			"1.0.0",
-		);
+		const result = appendTrailers("git commit -F CHANGES", "Model", "1.0.0");
 		expect(result).toBe(
 			`git commit -F CHANGES --trailer 'Co-Authored-By: Model <noreply@pi.dev>' --trailer 'Generated-By: pi 1.0.0'`,
 		);
@@ -240,7 +218,7 @@ describe("appendTrailers", () => {
 			writeFileSync(join(dir, "a"), "a");
 			execSync("git add a", { cwd: dir });
 			writeFileSync(join(dir, "MSG"), "msg from file");
-			const cmd = appendTrailers('git commit -F MSG', "Model", "1.0.0");
+			const cmd = appendTrailers("git commit -F MSG", "Model", "1.0.0");
 			// pi runs commits through /bin/bash (its shell backend); execSync defaults
 			// to /bin/sh, which is dash on the Ubuntu runner and breaks $'...' quoting
 			// used by the -m trailer shape. Mirror production's shell.
@@ -290,8 +268,12 @@ describe("sign-off (-s)", () => {
 				.filter((l) => /^(Signed-off-by|Co-Authored-By|Generated-By):/.test(l));
 			expect(trailers.length).toBe(3);
 			expect(trailers[trailers.length - 1]).toMatch(/^Signed-off-by:/);
-			expect(trailers.some((l) => l.startsWith("Co-Authored-By: Model"))).toBe(true);
-			expect(trailers.some((l) => l.startsWith("Generated-By: pi 1.0.0"))).toBe(true);
+			expect(trailers.some((l) => l.startsWith("Co-Authored-By: Model"))).toBe(
+				true,
+			);
+			expect(trailers.some((l) => l.startsWith("Generated-By: pi 1.0.0"))).toBe(
+				true,
+			);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

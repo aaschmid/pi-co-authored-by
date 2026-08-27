@@ -94,7 +94,11 @@ function splitAtShellBoundary(cmd: string): [string, string] {
  *   commit-conventions skill mandates `-m`), so the commit succeeding outranks
  *   the ordering.
  */
-export function appendTrailers(cmd: string, modelName: string, piVersion: string): string {
+export function appendTrailers(
+	cmd: string,
+	modelName: string,
+	piVersion: string,
+): string {
 	const [before, after] = splitAtShellBoundary(cmd);
 	const trimmed = before.trimEnd();
 	const usesFileMessage = /(\s-F\b|\s--file\b)/.test(before);

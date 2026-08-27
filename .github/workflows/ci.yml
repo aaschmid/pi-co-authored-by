@@ -21,4 +21,9 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run typecheck
+        if: always()
+      - run: npm run check
+        if: always()
       - run: npm test
+        if: always()
