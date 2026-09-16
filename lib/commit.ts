@@ -1,44 +1,24 @@
 /**
  * Pure logic for detecting and rewriting git commit commands with trailers.
  * Separated from the pi extension API for testability.
+ *
+ * Commands may be compounds (`git add X && git commit -m ...`,
+ * `cd repo ; git commit ...`): trailers are appended at the end of the FIRST
+ * segment that looks like a commit, leaving every other segment untouched.
+ * Segments fed through a pipe (preceding separator `|`) are never rewritten —
+ * they may read their message from stdin (`git commit -F -`).
  */
 
 /**
- * Check if a command is a `git commit` that supplies its message inline.
+ * Replace heredoc bodies (and their closing delimiter line) with spaces of the
+ * same length, so splitting/detection cannot mistake heredoc text for commands
+ * — while offsets in the masked string stay valid in the original.
  *
- * Matches:
- * - `-m` / `-am` (short flag ending in `m`)
- * - `-F` / `--file` (message read from a file)
- * - `--message` (long form of `-m`)
- *
- * Global git options may sit between `git` and the `commit` subcommand, e.g.
- * `git -c user.name=... -c user.email=... commit -s -m "msg"`, so tokens are
- * allowed there. A shell separator (`|` `;` `&`) ends the command, so a
- * preceding piped/compound command cannot satisfy the git-commit check on its
- * own. Returns false for interactive commits (no message flag), non-commit
- * git commands, a `git commit` that sits in a later compound segment
- * (`git add X && git commit ...` — trailers must not be injected into the
- * preceding command), and a `git commit` that only appears inside a heredoc
- * body (literal text, not a command).
- *
- * ponytail: the gap between `git` and `commit` is matched with `[^|;&]*`,
- * which is not quote-aware — a `-c` value containing `|` `;` or `&` would stop
- * the match early. Realistic `-c key=value` usage does not contain separators,
- * so this is left simple; upgrade to a quote-aware scan only if a real
- * command with a separator-bearing config value shows up. A bare newline is
- * also a shell separator but is not treated as one here, so a `git commit` on
- * a later line after unrelated commands (with no `;` `&` `|` between) still
- * matches — rare in practice; the common shapes (single command, trailing
- * pipe/compound) are handled.
+ * ponytail: line-based, handles <<DELIM, <<-DELIM, <<'DELIM', <<"DELIM".
+ * Does not handle multiple heredocs started on one line (<<A <<B) — rare;
+ * upgrade only if a real case shows up.
  */
-function stripHeredocs(cmd: string): string {
-	// Drop heredoc bodies so a `git commit -m` inside a heredoc (literal text,
-	// not a command) is not mistaken for a real commit. Keeps the marker line;
-	// drops the body and the closing delimiter line.
-	//
-	// ponytail: line-based, handles <<DELIM, <<-DELIM, <<'DELIM', <<"DELIM".
-	// Does not handle multiple heredocs started on one line (<<A <<B) — rare;
-	// upgrade only if a real case shows up.
+function maskHeredocs(cmd: string): string {
 	const lines = cmd.split("\n");
 	const out: string[] = [];
 	let delim: string | null = null;
@@ -47,6 +27,7 @@ function stripHeredocs(cmd: string): string {
 		if (delim !== null) {
 			const candidate = allowIndent ? line.replace(/^\t+/, "") : line;
 			if (candidate === delim) delim = null;
+			out.push(" ".repeat(line.length));
 			continue;
 		}
 		out.push(line);
@@ -59,38 +40,26 @@ function stripHeredocs(cmd: string): string {
 	return out.join("\n");
 }
 
-export function isGitCommit(cmd: string): boolean {
-	const normalized = cmd.replace(/\\\n/g, " ");
-	const stripped = stripHeredocs(normalized);
-	// Only the first shell segment can receive trailers; a `git commit` in a
-	// later segment (`git add && git commit ...`) must not fire, or trailers
-	// would be injected into the preceding command.
-	const firstSegment = splitAtShellBoundary(stripped)[0];
-	if (!/\bgit\b[^|;&]*\bcommit\b/.test(firstSegment)) return false;
-	// Message must be supplied inline.
-	return (
-		/\s-[^\s]*m\b/.test(firstSegment) || // -m, -am, -em, ...
-		/\s-F\b/.test(firstSegment) ||
-		/\s--file\b/.test(firstSegment) ||
-		/\s--message\b/.test(firstSegment)
-	);
-}
-
 /**
- * Split a command at the first top-level shell separator (`|` `;` `&`) that is
- * not inside quotes and not part of a redirection (`2>&1`, `>&2`, `&>`). The
- * trailers must be inserted before that boundary so they attach to the
- * `git commit` rather than to whatever follows a pipe (`| tail`) or a
- * compound (`&& git push`, `; echo done`).
+ * Split the masked command at top-level shell separators (`|` `;` `&` `&&`
+ * `||`), quote-aware and ignoring redirections (`2>&1`, `>&2`, `&>`). Returns
+ * each segment's byte range in `masked` (identical offsets in the original)
+ * plus the separator that follows it.
  *
- * Returns `[before, after]` where `after` includes the separator (empty when
- * the command has no top-level boundary).
+ * ponytail: a bare newline is not a separator, so a segment may span lines;
+ * a heredoc marker line containing `|`/`;`/`&` would be split — neither
+ * realistic for `git commit` shapes; upgrade to a full mask-aware pass only
+ * if a real command shows up.
  */
-function splitAtShellBoundary(cmd: string): [string, string] {
+function splitSegments(
+	masked: string,
+): { start: number; end: number; sep: string }[] {
+	const segs: { start: number; end: number; sep: string }[] = [];
+	let start = 0;
 	let single = false;
 	let double = false;
-	for (let i = 0; i < cmd.length; i++) {
-		const ch = cmd[i];
+	for (let i = 0; i < masked.length; i++) {
+		const ch = masked[i];
 		if (single) {
 			if (ch === "'") single = false;
 			continue;
@@ -107,20 +76,58 @@ function splitAtShellBoundary(cmd: string): [string, string] {
 			double = true;
 			continue;
 		}
-		if (ch === "|" || ch === ";") {
-			return [cmd.slice(0, i), cmd.slice(i)];
-		}
-		if (ch === "&") {
-			// Skip the `&` in redirection forms: `2>&1`, `>&2`, `&>file`.
-			if (cmd[i - 1] === ">" || cmd[i + 1] === ">") continue;
-			return [cmd.slice(0, i), cmd.slice(i)];
-		}
+		const isSep =
+			ch === ";" ||
+			ch === "|" ||
+			(ch === "&" && masked[i - 1] !== ">" && masked[i + 1] !== ">");
+		if (!isSep) continue;
+		const sepLen = masked[i + 1] === ch && ch !== ";" ? 2 : 1;
+		segs.push({ start, end: i, sep: masked.slice(i, i + sepLen) });
+		start = i + sepLen;
+		i += sepLen - 1;
 	}
-	return [cmd, ""];
+	segs.push({ start, end: masked.length, sep: "" });
+	return segs;
+}
+
+/** Does this segment text contain a `git commit` supplying its message inline?
+ *
+ * ponytail: the gap between `git` and `commit` is matched with `[^|;&]*`,
+ * which is not quote-aware — a `-c` value containing `|` `;` or `&` would stop
+ * the match early. Realistic `-c key=value` usage does not contain separators;
+ * upgrade to a quote-aware scan only if a real config value shows up. */
+function segmentIsCommit(seg: string): boolean {
+	const normalized = seg.replace(/\\\n/g, " ");
+	if (!/\bgit\b[^|;&]*\bcommit\b/.test(normalized)) return false;
+	// Message must be supplied inline.
+	return (
+		/\s-[^\s]*m\b/.test(normalized) || // -m, -am, -em, ...
+		/\s-F\b/.test(normalized) ||
+		/\s--file\b/.test(normalized) ||
+		/\s--message\b/.test(normalized)
+	);
+}
+
+/** Index of the first commit-bearing segment that is not pipe-fed, or -1. */
+function findCommitSegment(
+	masked: string,
+	segs: { start: number; end: number; sep: string }[],
+): number {
+	for (let i = 0; i < segs.length; i++) {
+		if (i > 0 && segs[i - 1].sep === "|") continue;
+		if (segmentIsCommit(masked.slice(segs[i].start, segs[i].end))) return i;
+	}
+	return -1;
+}
+
+export function isGitCommit(cmd: string): boolean {
+	const masked = maskHeredocs(cmd);
+	return findCommitSegment(masked, splitSegments(masked)) !== -1;
 }
 
 /**
- * Build the rewritten command with Co-Authored-By and Generated-By trailers.
+ * Build the rewritten command with Co-Authored-By and Generated-By trailers,
+ * appended at the end of the first commit-bearing segment (see module header).
  *
  * Two insertion shapes, chosen by how the message is supplied:
  * - `-m` / `--message` (default): append ` -m "" -m $'Co-Authored-By: ...\\nGenerated-By: ...'`.
@@ -139,11 +146,18 @@ export function appendTrailers(
 	modelName: string,
 	piVersion: string,
 ): string {
-	const [before, after] = splitAtShellBoundary(cmd);
-	const trimmed = before.trimEnd();
-	const usesFileMessage = /(\s-F\b|\s--file\b)/.test(before);
+	const masked = maskHeredocs(cmd);
+	const segs = splitSegments(masked);
+	const idx = findCommitSegment(masked, segs);
+	// Callers gate on isGitCommit; fall back to the original command if not.
+	if (idx === -1) return cmd;
+
+	const seg = segs[idx];
+	const segText = cmd.slice(seg.start, seg.end);
+	const usesFileMessage = /(\s-F\b|\s--file\b)/.test(segText);
 	const insert = usesFileMessage
 		? `--trailer 'Co-Authored-By: ${modelName} <noreply@pi.dev>' --trailer 'Generated-By: pi ${piVersion}'`
 		: `-m "" -m $'Co-Authored-By: ${modelName} <noreply@pi.dev>\\nGenerated-By: pi ${piVersion}'`;
-	return after ? `${trimmed} ${insert} ${after}` : `${trimmed} ${insert}`;
+	const newText = `${segText.trimEnd()} ${insert}${seg.sep ? " " : ""}`;
+	return `${cmd.slice(0, seg.start)}${newText}${cmd.slice(seg.end)}`;
 }

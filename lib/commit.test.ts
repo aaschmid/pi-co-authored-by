@@ -280,17 +280,89 @@ describe("sign-off (-s)", () => {
 	});
 });
 
-describe("compound commands and heredocs (regression)", () => {
-	it("does not fire when git commit is in a later && segment", () => {
-		// `git add X && git commit ...` — firing would inject trailers into
-		// `git add`, breaking it. Skip the whole compound instead.
-		expect(
-			isGitCommit('git add package-lock.json && git commit -s -m "fix: x"'),
-		).toBe(false);
+describe("commit in a later compound segment", () => {
+	it("fires when git commit is in a later && segment (cd-prefix shape)", () => {
+		expect(isGitCommit('cd repo && git commit -m "msg"')).toBe(true);
 	});
 
-	it("does not fire when git commit is in a later ; segment", () => {
-		expect(isGitCommit('echo hi ; git commit -m "msg"')).toBe(false);
+	it("fires when git commit is in a later ; segment", () => {
+		expect(isGitCommit('echo hi ; git commit -m "msg"')).toBe(true);
+	});
+
+	it("injects into the && commit segment, not the preceding command", () => {
+		const result = appendTrailers(
+			'git add package-lock.json && git commit -s -m "fix: x"',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toBe(
+			'git add package-lock.json && git commit -s -m "fix: x" -m "" ' +
+				`-m $'Co-Authored-By: Model <noreply@pi.dev>\\nGenerated-By: pi 1.0.0'`,
+		);
+	});
+
+	it("injects into the middle commit segment of a longer chain", () => {
+		const result = appendTrailers(
+			'cd repo && git commit -m "msg" && git push',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toMatch(
+			/git commit -m "msg" -m "" -m \$'Co-Authored-By.*' && git push/,
+		);
+		expect(result.split("&&")[0]).not.toContain("-m $");
+	});
+
+	it("injects into the commit segment after a semicolon", () => {
+		const result = appendTrailers(
+			'echo hi ; git commit -m "msg"',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toMatch(
+			/; git commit -m "msg" -m "" -m \$'Co-Authored-By.*'$/,
+		);
+	});
+
+	it("injects into the FIRST commit-bearing segment when several exist", () => {
+		const result = appendTrailers(
+			'git commit -m "a" ; git commit -m "b"',
+			"Model",
+			"1.0.0",
+		);
+		expect(result).toMatch(/-m "a" -m "" -m \$/);
+		expect(result).not.toMatch(/-m "b" -m/);
+	});
+
+	it("does not fire when a later segment's commit is piped into", () => {
+		// stdin-fed commit (`git commit -F -`) must not absorb trailer flags.
+		expect(isGitCommit("printf msg | git commit -F -")).toBe(false);
+	});
+
+	it("does not split on an && inside the commit message", () => {
+		const result = appendTrailers('git commit -m "fix && ship"', "M", "1");
+		expect(result).toMatch(/ -m \$'Co-Authored-By.*'$/);
+	});
+
+	it("commit detection is heredoc-body-proof even with && in the body", () => {
+		const cmd = [
+			"cat > f <<'EOF'",
+			'body mentioning git commit -m "x" && more',
+			"EOF",
+		].join("\n");
+		expect(isGitCommit(cmd)).toBe(false);
+	});
+
+	it("heredoc body with separators does not displace the injection point", () => {
+		const cmd = [
+			"cat > f <<'EOF'",
+			"body ; with separators",
+			"EOF",
+			'git commit -m "msg"',
+		].join("\n");
+		const result = appendTrailers(cmd, "M", "1");
+		expect(result).toContain('git commit -m "msg" -m "" -m $');
+		expect(result).toContain("body ; with separators");
 	});
 
 	it("fires when git commit is the first segment, injects before &&", () => {
